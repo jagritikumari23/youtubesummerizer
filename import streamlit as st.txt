@@ -1,0 +1,107 @@
+import streamlit as st
+from dotenv import load_dotenv
+import os
+import google.generativeai as genai
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from gtts import gTTS  # For text-to-speech
+import tempfile  # For temporary file management
+from googletrans import Translator
+
+# Load environment variables
+load_dotenv()
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# Prompt template for summarization
+prompt = """You are a YouTube video summarizer. You will be taking the transcript text
+and summarizing the content within the given time range. Provide the important summary in points
+within 250 words. Please provide the summary of the text given here: """
+# Initialize translator
+translator = Translator()
+
+# Function to extract transcript details
+def extract_transcript_details(youtube_video_url, desired_language="en"):
+    try:
+        video_id = youtube_video_url.split("=")[1]
+        # Attempt to fetch transcript in desired language
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=[desired_language])
+        return transcript, desired_language
+    except NoTranscriptFound:
+        st.warning(f"No transcript available in {desired_language}. Trying auto-generated options...")
+        try:
+            # Fallback to auto-generated transcript
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            auto_transcript = transcript_list.find_generated_transcript(["hi", "en"])  # Auto-gen fallback
+            transcript = auto_transcript.fetch()
+            return transcript, auto_transcript.language_code
+        except Exception as fallback_error:
+            st.error(f"Failed to fetch auto-generated transcript: {fallback_error}")
+            return None, None
+    except TranscriptsDisabled:
+        st.warning("Transcripts are disabled for this video.")
+        return None, None
+
+# Translate transcript if needed
+def translate_transcript(transcript, from_lang, to_lang="en"):
+    full_text = " ".join([entry["text"] for entry in transcript])
+    translation = translator.translate(full_text, src=from_lang, dest=to_lang)
+    return translation.text
+
+# Filter transcript based on time range
+def filter_transcript(transcript, start_time, end_time):
+    filtered_text = ""
+    for segment in transcript:
+        if start_time <= segment["start"] <= end_time:
+            filtered_text += " " + segment["text"]
+    return filtered_text
+
+# Generate summary using Google Gemini Pro
+def generate_gemini_content(transcript_text, prompt):
+    model = genai.GenerativeModel("gemini-pro")
+    response = model.generate_content(prompt + transcript_text)
+    return response.text
+
+# Convert text to podcast (audio)
+def generate_podcast(summary_text):
+    tts = gTTS(text=summary_text, lang="en")
+    temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(temp_audio.name)
+    return temp_audio.name
+
+# Streamlit App
+st.title("YouTube Transcript to Podcast Converter")
+youtube_link = st.text_input("Enter YouTube Video Link:")
+
+if youtube_link:
+    video_id = youtube_link.split("=")[1]
+    st.image(f"http://img.youtube.com/vi/{video_id}/0.jpg", use_container_width=True)
+
+    # Time range input
+    start_time = st.number_input("Start Time (in seconds):", min_value=0, step=1)
+    end_time = st.number_input("End Time (in seconds):", min_value=0, step=1)
+
+    if st.button("Get Detailed Notes and Podcast"):
+        transcript, detected_language = extract_transcript_details(youtube_link)
+        if transcript:
+            # Filter transcript based on the selected time range
+            filtered_text = filter_transcript(transcript, start_time, end_time)
+            if filtered_text:
+                # Generate the summary using Gemini
+                summary = generate_gemini_content(filtered_text, prompt)
+                st.markdown("## Detailed Notes:")
+                st.write(summary)
+
+                # Generate podcast
+                podcast_file = generate_podcast(summary)
+                st.audio(podcast_file)  # Play audio in Streamlit
+                st.download_button(
+                    label="Download Podcast",
+                    data=open(podcast_file, "rb").read(),
+                    file_name="podcast_summary.mp3",
+                    mime="audio/mpeg",
+                )
+                # Clean up temporary file after download
+                os.remove(podcast_file)
+            else:
+                st.warning("No transcript available for the selected time range.")
+        else:
+            st.warning("Failed to fetch transcript. Please check the video URL or transcript availability.")
