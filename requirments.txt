@@ -10,4 +10,8 @@ gtts
 collection
 pydrive
 webbrowser
+wordcloud
+pandas
+matplotlib
+dropbox
 
