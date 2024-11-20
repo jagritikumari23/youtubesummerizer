@@ -7,3 +7,7 @@ os
 tempfile
 googletrans
 gtts
+collection
+pydrive
+webbrowser
+
