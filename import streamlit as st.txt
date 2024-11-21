@@ -13,6 +13,8 @@ import pandas as pd
 import dropbox
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from transformers import pipeline  # For content categorization
 import webbrowser
 
 # Load environment variables
@@ -25,8 +27,12 @@ and summarizing the content within the given time range or based on selected key
 Provide the important summary in points within 250 words. Please highlight key points.
 Please provide the summary of the text given here: """
 
-# Initialize translator
+# Initialize translator and sentiment analyzer
 translator = Translator()
+analyzer = SentimentIntensityAnalyzer()
+
+# Load pre-trained categorizer from Hugging Face
+categorizer = pipeline("zero-shot-classification")
 
 # Function to extract transcript details
 def extract_transcript_details(youtube_video_url, desired_language="en"):
@@ -107,11 +113,34 @@ def generate_term_frequency_graph(text):
     df = pd.DataFrame(word_counts.items(), columns=["Word", "Frequency"]).sort_values(by="Frequency", ascending=False).head(10)
     return df
 
+# Sentiment analysis function
+def analyze_sentiment(text):
+    sentiment = analyzer.polarity_scores(text)
+    return sentiment
+
+# Content categorization function
+def categorize_content(text):
+    categories = ["Technology", "Education", "Entertainment", "Business", "Health", "Science"]
+    result = categorizer(text, candidate_labels=categories)
+    return result['labels'][0]  # Most likely category
+
 # Streamlit App
 st.set_page_config(page_title="YouTube Transcript to Podcast Converter", page_icon="🎧", layout="centered")
 
 st.title("🎥 YouTube Transcript to Podcast Converter")
 st.markdown("#### Transform your YouTube video transcripts into summarized podcasts!")
+
+# Add user guide/tutorial section
+st.markdown("## How to Use This App")
+st.markdown("""
+1. **Enter YouTube Video Link:** Paste the YouTube URL of the video you want to summarize.
+2. **Select Time Range (Optional):** If you only want a summary from a specific part of the video, enter the start and end times in seconds.
+3. **Filter by Keywords (Optional):** If you want to focus on certain topics, type keywords or phrases to filter the transcript.
+4. **Choose Summary Formatting:** You can select how you want the summary to be presented: either as bullet points or in headings.
+5. **Generate Notes & Podcast:** Click the button to generate a summary of the transcript, a podcast in MP3 format, a word cloud, and sentiment analysis.
+6. **Download the Podcast:** After generating the podcast, you can download the MP3 file directly to your device.
+7. **Provide Feedback:** Rate the quality of the summary and leave suggestions for improvement.
+""")
 
 # Video link input
 youtube_link = st.text_input("Enter YouTube Video Link:")
@@ -179,15 +208,22 @@ if st.button("Generate Notes & Podcast 🎙️"):
                 term_freq_df = generate_term_frequency_graph(filtered_text)
                 st.bar_chart(term_freq_df.set_index("Word"))
 
+                # Sentiment Analysis
+                sentiment = analyze_sentiment(filtered_text)
+                st.markdown("### Sentiment Analysis")
+                st.write(sentiment)
+
+                # Content Categorization
+                category = categorize_content(filtered_text)
+                st.markdown(f"### Content Category: {category}")
+
                 # Collect feedback
                 st.markdown("### Feedback")
                 rating = st.slider("Rate the quality of the summary (1 to 5):", 1, 5, 3)
                 suggestion = st.text_area("Suggestions for improvement:")
                 if st.button("Submit Feedback"):
-
-                    
-                   feedback_data.append({"Rating": rating, "Suggestion": suggestion})
-                st.success("Thank you for your feedback!")
+                    feedback_data.append({"Rating": rating, "Suggestion": suggestion})
+                    st.success("Thank you for your feedback!")
             else:
                 st.warning("No content matches the specified filters.")
         else:
@@ -200,4 +236,3 @@ if feedback_data:
     st.markdown("### Collected Feedback")
     feedback_df = pd.DataFrame(feedback_data)
     st.table(feedback_df)
-            st.warning("Failed to fetch transcript. Please check the video URL or transcript availability.")
